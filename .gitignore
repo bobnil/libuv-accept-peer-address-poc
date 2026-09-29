@@ -1,0 +1,7 @@
+/libuv-patched
+/libuv-upstream
+/bench/client
+/bench/server-patched
+/bench/server-upstream
+__pycache__/
+*.pyc

@@ -1,0 +1,161 @@
+diff --git a/include/uv/unix.h b/include/uv/unix.h
+index db6507e1..68967521 100644
+--- a/include/uv/unix.h
++++ b/include/uv/unix.h
+@@ -283,10 +283,14 @@ typedef struct {
+   uv_connection_cb connection_cb;                                             \
+   int delayed_error;                                                          \
+   int accepted_fd;                                                            \
++  struct sockaddr_storage accepted_saddr;                                     \
++  socklen_t accepted_slen;                                                    \
+   void* queued_fds;                                                           \
+   UV_STREAM_PRIVATE_PLATFORM_FIELDS                                           \
+ 
+-#define UV_TCP_PRIVATE_FIELDS /* empty */
++#define UV_TCP_PRIVATE_FIELDS                                                 \
++  struct sockaddr_storage saddr;                                              \
++  socklen_t slen;
+ 
+ #define UV_UDP_PRIVATE_FIELDS                                                 \
+   uv_alloc_cb alloc_cb;                                                       \
+diff --git a/src/unix/core.c b/src/unix/core.c
+index 783ecdf4..a8cdfce2 100644
+--- a/src/unix/core.c
++++ b/src/unix/core.c
+@@ -531,20 +531,26 @@ FILE* uv__open_file(const char* path) {
+ }
+ 
+ 
+-int uv__accept(int sockfd) {
++int uv__accept(int sockfd, struct sockaddr* saddr, socklen_t* slen) {
+   int peerfd;
+   int err;
++  socklen_t original_slen;
+ 
+   (void) &err;
+   assert(sockfd >= 0);
+ 
+-  do
++  if (slen != NULL)
++    original_slen = *slen;
++
++  do {
++    if (slen != NULL)
++      *slen = original_slen;
+ #ifdef uv__accept4
+-    peerfd = uv__accept4(sockfd, NULL, NULL, SOCK_NONBLOCK|SOCK_CLOEXEC);
++    peerfd = uv__accept4(sockfd, saddr, slen, SOCK_NONBLOCK | SOCK_CLOEXEC);
+ #else
+-    peerfd = accept(sockfd, NULL, NULL);
++    peerfd = accept(sockfd, saddr, slen);
+ #endif
+-  while (peerfd == -1 && errno == EINTR);
++  } while (peerfd == -1 && errno == EINTR);
+ 
+   if (peerfd == -1)
+     return UV__ERR(errno);
+diff --git a/src/unix/internal.h b/src/unix/internal.h
+index d6ff36d8..499eac2b 100644
+--- a/src/unix/internal.h
++++ b/src/unix/internal.h
+@@ -282,7 +282,7 @@ void uv__stream_destroy(uv_stream_t* stream);
+ int uv__stream_try_select(uv_stream_t* stream, int* fd);
+ #endif /* defined(__APPLE__) */
+ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events);
+-int uv__accept(int sockfd);
++int uv__accept(int sockfd, struct sockaddr* saddr, socklen_t* slen);
+ int uv__dup2_cloexec(int oldfd, int newfd);
+ int uv__open_cloexec(const char* path, int flags);
+ int uv__slurp(const char* filename, char* buf, size_t len);
+diff --git a/src/unix/stream.c b/src/unix/stream.c
+index 18763b47..a23477d6 100644
+--- a/src/unix/stream.c
++++ b/src/unix/stream.c
+@@ -92,6 +92,7 @@ void uv__stream_init(uv_loop_t* loop,
+   stream->connect_req = NULL;
+   stream->shutdown_req = NULL;
+   stream->accepted_fd = -1;
++  stream->accepted_slen = 0;
+   stream->queued_fds = NULL;
+   stream->delayed_error = 0;
+   uv__queue_init(&stream->write_queue);
+@@ -492,7 +493,7 @@ static int uv__emfile_trick(uv_loop_t* loop, int accept_fd) {
+   loop->emfile_fd = -1;
+ 
+   do {
+-    err = uv__accept(accept_fd);
++    err = uv__accept(accept_fd, NULL, NULL);
+     if (err >= 0)
+       uv__close(err);
+   } while (err >= 0 || err == UV_EINTR);
+@@ -516,7 +517,16 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
+   assert(!(stream->flags & UV_HANDLE_CLOSING));
+ 
+   fd = uv__stream_fd(stream);
+-  err = uv__accept(fd);
++
++  stream->accepted_slen = sizeof(stream->accepted_saddr);
++
++  err = uv__accept(
++      fd,
++      (struct sockaddr*) &stream->accepted_saddr,
++      &stream->accepted_slen);
++
++  if (err < 0)
++    stream->accepted_slen = 0;
+ 
+   if (err == UV_EMFILE || err == UV_ENFILE)
+     err = uv__emfile_trick(loop, fd);  /* Shed load. */
+@@ -552,6 +562,17 @@ int uv_accept(uv_stream_t* server, uv_stream_t* client) {
+         uv__close(server->accepted_fd);
+         goto done;
+       }
++
++      if (client->type == UV_TCP && server->accepted_slen > 0) {
++        uv_tcp_t* tcp = (uv_tcp_t*) client;
++
++        memcpy(&tcp->saddr,
++               &server->accepted_saddr,
++               server->accepted_slen);
++
++        tcp->slen = server->accepted_slen;
++      }
++
+       break;
+ 
+     case UV_UDP:
+diff --git a/src/unix/tcp.c b/src/unix/tcp.c
+index 98970d75..4507a52e 100644
+--- a/src/unix/tcp.c
++++ b/src/unix/tcp.c
+@@ -123,6 +123,7 @@ int uv_tcp_init_ex(uv_loop_t* loop, uv_tcp_t* tcp, unsigned int flags) {
+     return UV_EINVAL;
+ 
+   uv__stream_init(loop, (uv_stream_t*)tcp, UV_TCP);
++  tcp->slen = 0;
+ 
+   /* If anything fails beyond this point we need to remove the handle from
+    * the handle queue, since it was added by uv__handle_init in uv_stream_init.
+@@ -382,10 +383,22 @@ int uv_tcp_getsockname(const uv_tcp_t* handle,
+ int uv_tcp_getpeername(const uv_tcp_t* handle,
+                        struct sockaddr* name,
+                        int* namelen) {
++  int slen;
+ 
+   if (handle->delayed_error)
+     return handle->delayed_error;
+ 
++  if (handle->slen > 0) {
++    slen = handle->slen;
++
++    if (*namelen < slen)
++      return UV_ENOBUFS;
++
++    memcpy(name, &handle->saddr, slen);
++    *namelen = slen;
++    return 0;
++  }
++
+   return uv__getsockpeername((const uv_handle_t*) handle,
+                              getpeername,
+                              name,
