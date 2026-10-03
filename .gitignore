@@ -1,7 +1,9 @@
 /libuv-patched
 /libuv-upstream
+/libuv-listen2
 /bench/client
 /bench/server-patched
+/bench/server-listen2
 /bench/server-upstream
 __pycache__/
 *.pyc

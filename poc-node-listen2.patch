@@ -1,0 +1,288 @@
+diff --git a/src/connection_wrap.cc b/src/connection_wrap.cc
+index 8cb6b8e66ce..dcdbee7504c 100644
+--- a/src/connection_wrap.cc
++++ b/src/connection_wrap.cc
+@@ -74,6 +74,55 @@ void ConnectionWrap<WrapType, UVType>::OnConnection(uv_stream_t* handle,
+ }
+ 
+ 
++template <typename WrapType, typename UVType>
++void ConnectionWrap<WrapType, UVType>::OnConnection2(uv_stream_t* handle,
++                                                     int status,
++                                                     const sockaddr* peer,
++                                                     socklen_t peerlen) {
++  WrapType* wrap_data = static_cast<WrapType*>(handle->data);
++  CHECK_NOT_NULL(wrap_data);
++  CHECK_EQ(&wrap_data->handle_, reinterpret_cast<UVType*>(handle));
++
++  Environment* env = wrap_data->env();
++  HandleScope handle_scope(env->isolate());
++  Context::Scope context_scope(env->context());
++
++  // We should not be getting this callback if someone has already called
++  // uv_close() on the handle.
++  CHECK_EQ(wrap_data->persistent().IsEmpty(), false);
++
++  Local<Value> client_handle;
++
++  if (status == 0) {
++    // Instantiate the client javascript object and handle.
++    Local<Object> client_obj;
++    if (!WrapType::Instantiate(env, wrap_data, WrapType::SOCKET)
++             .ToLocal(&client_obj))
++      return;
++
++    // Unwrap the client javascript object.
++    WrapType* wrap;
++    ASSIGN_OR_RETURN_UNWRAP(&wrap, client_obj);
++    uv_stream_t* client = reinterpret_cast<uv_stream_t*>(&wrap->handle_);
++    // uv_accept can fail if the new connection has already been closed, in
++    // which case an EAGAIN (resource temporarily unavailable) will be
++    // returned.
++    if (uv_accept(handle, client))
++      return;
++
++    wrap->SetAcceptedPeerName(peer, peerlen);
++
++    // Successful accept. Call the onconnection callback in JavaScript land.
++    client_handle = client_obj;
++  } else {
++    client_handle = Undefined(env->isolate());
++  }
++
++  Local<Value> argv[] = { Integer::New(env->isolate(), status), client_handle };
++  wrap_data->MakeCallback(env->onconnection_string(), arraysize(argv), argv);
++}
++
++
+ template <typename WrapType, typename UVType>
+ void ConnectionWrap<WrapType, UVType>::AfterConnect(uv_connect_t* req,
+                                                     int status) {
+@@ -132,6 +181,12 @@ template void ConnectionWrap<PipeWrap, uv_pipe_t>::OnConnection(
+ template void ConnectionWrap<TCPWrap, uv_tcp_t>::OnConnection(
+     uv_stream_t* handle, int status);
+ 
++template void ConnectionWrap<TCPWrap, uv_tcp_t>::OnConnection2(
++    uv_stream_t* handle,
++    int status,
++    const sockaddr* peer,
++    socklen_t peerlen);
++
+ template void ConnectionWrap<PipeWrap, uv_pipe_t>::AfterConnect(
+     uv_connect_t* handle, int status);
+ 
+diff --git a/src/connection_wrap.h b/src/connection_wrap.h
+index e91b2ab35b6..f52f3604bf9 100644
+--- a/src/connection_wrap.h
++++ b/src/connection_wrap.h
+@@ -13,6 +13,10 @@ template <typename WrapType, typename UVType>
+ class ConnectionWrap : public LibuvStreamWrap {
+  public:
+   static void OnConnection(uv_stream_t* handle, int status);
++  static void OnConnection2(uv_stream_t* handle,
++                            int status,
++                            const sockaddr* peer,
++                            socklen_t peerlen);
+   static void AfterConnect(uv_connect_t* req, int status);
+ 
+  protected:
+diff --git a/src/tcp_wrap.cc b/src/tcp_wrap.cc
+index 68439487700..663d3dd5765 100644
+--- a/src/tcp_wrap.cc
++++ b/src/tcp_wrap.cc
+@@ -26,6 +26,7 @@
+ #endif
+ #include <cerrno>
+ #include <cstdlib>
++#include <cstring>
+ #include "connect_wrap.h"
+ #include "connection_wrap.h"
+ #include "env-inl.h"
+@@ -114,7 +115,7 @@ void TCPWrap::Initialize(Local<Object> target,
+     SetProtoMethod(isolate,
+                    t,
+                    "getpeername",
+-                   GetSockOrPeerName<TCPWrap, uv_tcp_getpeername>);
++                   GetPeerName);
+     SetProtoMethod(isolate, t, "setNoDelay", SetNoDelay);
+     SetProtoMethod(isolate, t, "setKeepAlive", SetKeepAlive);
+     SetProtoMethod(isolate, t, "setTypeOfService", SetTypeOfService);
+@@ -155,7 +156,7 @@ void TCPWrap::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
+   registry->Register(Connect6);
+ 
+   registry->Register(GetSockOrPeerName<TCPWrap, uv_tcp_getsockname>);
+-  registry->Register(GetSockOrPeerName<TCPWrap, uv_tcp_getpeername>);
++  registry->Register(GetPeerName);
+   registry->Register(SetNoDelay);
+   registry->Register(SetKeepAlive);
+   registry->Register(SetTypeOfService);
+@@ -199,6 +200,37 @@ TCPWrap::TCPWrap(Environment* env, Local<Object> object, ProviderType provider)
+                    // Suggestion: uv_tcp_init() returns void.
+ }
+ 
++bool TCPWrap::HasAcceptedPeerName() const {
++  return accepted_peername_len_ > 0;
++}
++
++void TCPWrap::SetAcceptedPeerName(const sockaddr* peer, size_t peerlen) {
++  if (peer == nullptr ||
++      peerlen == 0 ||
++      peerlen > sizeof(accepted_peername_)) {
++    accepted_peername_len_ = 0;
++    return;
++  }
++
++  memcpy(&accepted_peername_, peer, peerlen);
++  accepted_peername_len_ = peerlen;
++}
++
++int TCPWrap::GetAcceptedPeerName(sockaddr* peer, int* peerlen) const {
++  if (!HasAcceptedPeerName())
++    return UV_ENOTCONN;
++
++  if (*peerlen < 0 ||
++      static_cast<size_t>(*peerlen) < accepted_peername_len_) {
++    *peerlen = static_cast<int>(accepted_peername_len_);
++    return UV_ENOBUFS;
++  }
++
++  memcpy(peer, &accepted_peername_, accepted_peername_len_);
++  *peerlen = static_cast<int>(accepted_peername_len_);
++  return 0;
++}
++
+ void TCPWrap::SetNoDelay(const FunctionCallbackInfo<Value>& args) {
+   TCPWrap* wrap;
+   ASSIGN_OR_RETURN_UNWRAP(
+@@ -443,7 +475,25 @@ std::unique_ptr<worker::TransferData> TCPWrap::TransferForMessaging() {
+   // it, or until TransferData is destroyed if the message is not delivered.
+   Close();
+ 
+-  return std::make_unique<TransferData>(duplicate, type);
++  return std::make_unique<TransferData>(
++      duplicate,
++      type,
++      HasAcceptedPeerName() ? &accepted_peername_ : nullptr,
++      accepted_peername_len_);
++}
++
++TCPWrap::TransferData::TransferData(
++    uv_os_sock_t socket,
++    SocketType type,
++    const sockaddr_storage* accepted_peername,
++    size_t accepted_peername_len)
++    : socket_(socket), type_(type) {
++  if (accepted_peername != nullptr &&
++      accepted_peername_len > 0 &&
++      accepted_peername_len <= sizeof(accepted_peername_)) {
++    memcpy(&accepted_peername_, accepted_peername, accepted_peername_len);
++    accepted_peername_len_ = accepted_peername_len;
++  }
+ }
+ 
+ TCPWrap::TransferData::~TransferData() {
+@@ -487,6 +537,11 @@ BaseObjectPtr<BaseObject> TCPWrap::TransferData::Deserialize(
+   wrap->set_fd(socket_);
+   socket_ = -1;
+ #endif
++  if (accepted_peername_len_ > 0) {
++    wrap->SetAcceptedPeerName(
++        reinterpret_cast<const sockaddr*>(&accepted_peername_),
++        accepted_peername_len_);
++  }
+   return BaseObjectPtr<BaseObject>(wrap);
+ }
+ 
+@@ -543,8 +598,31 @@ void TCPWrap::Listen(const FunctionCallbackInfo<Value>& args) {
+ 
+   THROW_IF_INSUFFICIENT_PERMISSIONS(env, permission::PermissionScope::kNet, "");
+ 
++#ifndef _WIN32
++  int err = uv_listen2(
++      reinterpret_cast<uv_stream_t*>(&wrap->handle_), backlog, OnConnection2);
++#else
+   int err = uv_listen(
+       reinterpret_cast<uv_stream_t*>(&wrap->handle_), backlog, OnConnection);
++#endif
++  args.GetReturnValue().Set(err);
++}
++
++void TCPWrap::GetPeerName(const FunctionCallbackInfo<Value>& args) {
++  TCPWrap* wrap;
++  ASSIGN_OR_RETURN_UNWRAP(
++      &wrap, args.This(), args.GetReturnValue().Set(UV_EBADF));
++  CHECK(args[0]->IsObject());
++
++  sockaddr_storage storage;
++  int addrlen = sizeof(storage);
++  sockaddr* const addr = reinterpret_cast<sockaddr*>(&storage);
++  const int err = wrap->HasAcceptedPeerName()
++      ? wrap->GetAcceptedPeerName(addr, &addrlen)
++      : uv_tcp_getpeername(&wrap->handle_, addr, &addrlen);
++
++  if (err == 0)
++    AddressToJS(wrap->env(), addr, args[0].As<Object>());
+   args.GetReturnValue().Set(err);
+ }
+ 
+diff --git a/src/tcp_wrap.h b/src/tcp_wrap.h
+index 4802b62727a..f9db260703c 100644
+--- a/src/tcp_wrap.h
++++ b/src/tcp_wrap.h
+@@ -28,6 +28,8 @@
+ #include "connection_wrap.h"
+ #include "node_messaging.h"
+ 
++#include <cstddef>
++
+ namespace node {
+ 
+ class ExternalReferenceRegistry;
+@@ -71,11 +73,14 @@ class TCPWrap : public ConnectionWrap<TCPWrap, uv_tcp_t> {
+ 
+  private:
+   typedef uv_tcp_t HandleType;
++  friend class ConnectionWrap<TCPWrap, uv_tcp_t>;
+ 
+   class TransferData : public worker::TransferData {
+    public:
+-    explicit TransferData(uv_os_sock_t socket, SocketType type)
+-        : socket_(socket), type_(type) {}
++    TransferData(uv_os_sock_t socket,
++                 SocketType type,
++                 const sockaddr_storage* accepted_peername,
++                 size_t accepted_peername_len);
+     ~TransferData() override;
+ 
+     BaseObjectPtr<BaseObject> Deserialize(
+@@ -90,6 +95,8 @@ class TCPWrap : public ConnectionWrap<TCPWrap, uv_tcp_t> {
+    private:
+     uv_os_sock_t socket_;
+     SocketType type_;
++    sockaddr_storage accepted_peername_ = {};
++    size_t accepted_peername_len_ = 0;
+   };
+ 
+   template <typename T,
+@@ -107,6 +114,7 @@ class TCPWrap : public ConnectionWrap<TCPWrap, uv_tcp_t> {
+   static void Bind(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void Bind6(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void Listen(const v8::FunctionCallbackInfo<v8::Value>& args);
++  static void GetPeerName(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void Connect(const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void Connect6(const v8::FunctionCallbackInfo<v8::Value>& args);
+   template <typename T>
+@@ -124,6 +132,13 @@ class TCPWrap : public ConnectionWrap<TCPWrap, uv_tcp_t> {
+   static void Reset(const v8::FunctionCallbackInfo<v8::Value>& args);
+   int Reset(v8::Local<v8::Value> close_callback = v8::Local<v8::Value>());
+ 
++  bool HasAcceptedPeerName() const;
++  void SetAcceptedPeerName(const sockaddr* peer, size_t peerlen);
++  int GetAcceptedPeerName(sockaddr* peer, int* peerlen) const;
++
++  sockaddr_storage accepted_peername_ = {};
++  size_t accepted_peername_len_ = 0;
++
+ #ifdef _WIN32
+   static void SetSimultaneousAccepts(
+       const v8::FunctionCallbackInfo<v8::Value>& args);

@@ -1,0 +1,216 @@
+diff --git a/include/uv.h b/include/uv.h
+index bf0ccb65..a579ff9d 100644
+--- a/include/uv.h
++++ b/include/uv.h
+@@ -330,6 +330,10 @@ typedef void (*uv_write_cb)(uv_write_t* req, int status);
+ typedef void (*uv_connect_cb)(uv_connect_t* req, int status);
+ typedef void (*uv_shutdown_cb)(uv_shutdown_t* req, int status);
+ typedef void (*uv_connection_cb)(uv_stream_t* server, int status);
++typedef void (*uv_connection2_cb)(uv_stream_t* server,
++                                  int status,
++                                  const struct sockaddr* peer,
++                                  socklen_t peerlen);
+ typedef void (*uv_close_cb)(uv_handle_t* handle);
+ typedef void (*uv_poll_cb)(uv_poll_t* handle, int status, int events);
+ typedef void (*uv_timer_cb)(uv_timer_t* handle);
+@@ -540,6 +544,9 @@ struct uv_stream_s {
+ UV_EXTERN size_t uv_stream_get_write_queue_size(const uv_stream_t* stream);
+ 
+ UV_EXTERN int uv_listen(uv_stream_t* stream, int backlog, uv_connection_cb cb);
++UV_EXTERN int uv_listen2(uv_stream_t* stream,
++                         int backlog,
++                         uv_connection2_cb cb);
+ UV_EXTERN int uv_accept(uv_stream_t* server, uv_stream_t* client);
+ 
+ UV_EXTERN int uv_read_start(uv_stream_t*,
+diff --git a/src/unix/core.c b/src/unix/core.c
+index 03e0b4bd..8116cd38 100644
+--- a/src/unix/core.c
++++ b/src/unix/core.c
+@@ -589,6 +589,46 @@ int uv__accept(int sockfd) {
+ }
+ 
+ 
++int uv__accept2(int sockfd, struct sockaddr* saddr, socklen_t* slen) {
++  int peerfd;
++  int err;
++  socklen_t original_slen;
++
++  (void) &err;
++  assert(sockfd >= 0);
++  assert(saddr != NULL);
++  assert(slen != NULL);
++
++  original_slen = *slen;
++
++  do {
++    *slen = original_slen;
++#ifdef uv__accept4
++    peerfd = uv__accept4(sockfd, saddr, slen, SOCK_NONBLOCK|SOCK_CLOEXEC);
++#else
++    peerfd = accept(sockfd, saddr, slen);
++#endif
++  }
++  while (peerfd == -1 && errno == EINTR);
++
++  if (peerfd == -1)
++    return UV__ERR(errno);
++
++#ifndef uv__accept4
++  err = uv__cloexec(peerfd, 1);
++  if (err == 0)
++    err = uv__nonblock(peerfd, 1);
++
++  if (err != 0) {
++    uv__close(peerfd);
++    return err;
++  }
++#endif
++
++  return peerfd;
++}
++
++
+ /* close() on macos has the "interesting" quirk that it fails with EINTR
+  * without closing the file descriptor when a thread is in the cancel state.
+  * That's why libuv calls close$NOCANCEL() instead.
+diff --git a/src/unix/internal.h b/src/unix/internal.h
+index f557f94d..cbe6fab8 100644
+--- a/src/unix/internal.h
++++ b/src/unix/internal.h
+@@ -352,6 +352,7 @@ int uv__stream_try_select(uv_stream_t* stream, int* fd);
+ #endif /* defined(__APPLE__) */
+ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events);
+ int uv__accept(int sockfd);
++int uv__accept2(int sockfd, struct sockaddr* saddr, socklen_t* slen);
+ int uv__dup2_cloexec(int oldfd, int newfd);
+ int uv__open_cloexec(const char* path, int flags);
+ int uv__slurp(const char* filename, char* buf, size_t len);
+diff --git a/src/unix/stream.c b/src/unix/stream.c
+index af7c44ed..73bad8e0 100644
+--- a/src/unix/stream.c
++++ b/src/unix/stream.c
+@@ -35,6 +35,11 @@
+ #include <unistd.h>
+ #include <limits.h> /* IOV_MAX */
+ 
++typedef union {
++  uv_connection_cb connection_cb;
++  uv_connection2_cb connection2_cb;
++} uv__connection_cb;
++
+ #if defined(__APPLE__)
+ # include <sys/event.h>
+ # include <sys/time.h>
+@@ -505,7 +510,9 @@ static int uv__emfile_trick(uv_loop_t* loop, int accept_fd) {
+ 
+ 
+ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
++  struct sockaddr_storage peer;
+   uv_stream_t* stream;
++  socklen_t peerlen;
+   int err;
+   int fd;
+ 
+@@ -515,7 +522,13 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
+   assert(!(stream->flags & UV_HANDLE_CLOSING));
+ 
+   fd = uv__stream_fd(stream);
+-  err = uv__accept(fd);
++  if (stream->flags & UV_HANDLE_TCP_LISTEN2) {
++    peerlen = sizeof(peer);
++    err = uv__accept2(fd, (struct sockaddr*) &peer, &peerlen);
++  } else {
++    err = uv__accept(fd);
++    peerlen = 0;
++  }
+ 
+   if (err == UV_EMFILE || err == UV_ENFILE)
+     err = uv__emfile_trick(loop, fd);  /* Shed load. */
+@@ -524,7 +537,14 @@ void uv__server_io(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
+     return;
+ 
+   stream->accepted_fd = err;
+-  stream->connection_cb(stream, 0);
++  if (stream->flags & UV_HANDLE_TCP_LISTEN2) {
++    uv__connection_cb cb;
++
++    cb.connection_cb = stream->connection_cb;
++    cb.connection2_cb(stream, 0, (const struct sockaddr*) &peer, (int) peerlen);
++  } else {
++    stream->connection_cb(stream, 0);
++  }
+ 
+   if (stream->accepted_fd != -1)
+     /* The user hasn't yet accepted called uv_accept() */
+@@ -613,8 +633,38 @@ int uv_listen(uv_stream_t* stream, int backlog, uv_connection_cb cb) {
+     err = UV_EINVAL;
+   }
+ 
+-  if (err == 0)
++  if (err == 0) {
++    uv__handle_start(stream);
++    stream->flags &= ~UV_HANDLE_TCP_LISTEN2;
++  }
++
++  return err;
++}
++
++
++int uv_listen2(uv_stream_t* stream, int backlog, uv_connection2_cb cb) {
++  uv__connection_cb connection_cb;
++  int err;
++
++  if (uv__is_closing(stream))
++    return UV_EINVAL;
++
++  switch (stream->type) {
++  case UV_TCP:
++    connection_cb.connection2_cb = cb;
++    err = uv__tcp_listen((uv_tcp_t*) stream,
++                         backlog,
++                         connection_cb.connection_cb);
++    break;
++
++  default:
++    err = UV_EINVAL;
++  }
++
++  if (err == 0) {
++    stream->flags |= UV_HANDLE_TCP_LISTEN2;
+     uv__handle_start(stream);
++  }
+ 
+   return err;
+ }
+diff --git a/src/uv-common.h b/src/uv-common.h
+index 7e811371..d25acad5 100644
+--- a/src/uv-common.h
++++ b/src/uv-common.h
+@@ -111,6 +111,7 @@ enum {
+   UV_HANDLE_TCP_SINGLE_ACCEPT           = 0x04000000,
+   UV_HANDLE_TCP_ACCEPT_STATE_CHANGING   = 0x08000000,
+   UV_HANDLE_SHARED_TCP_SOCKET           = 0x10000000,
++  UV_HANDLE_TCP_LISTEN2                 = 0x20000000,
+ 
+   /* Only used by uv_udp_t handles. */
+   UV_HANDLE_UDP_PROCESSING              = 0x01000000,
+diff --git a/src/win/stream.c b/src/win/stream.c
+index e88a4934..2b4c31fa 100644
+--- a/src/win/stream.c
++++ b/src/win/stream.c
+@@ -48,6 +48,14 @@ int uv_listen(uv_stream_t* stream, int backlog, uv_connection_cb cb) {
+ }
+ 
+ 
++int uv_listen2(uv_stream_t* stream, int backlog, uv_connection2_cb cb) {
++  (void) stream;
++  (void) backlog;
++  (void) cb;
++  return UV_ENOSYS;
++}
++
++
+ int uv_accept(uv_stream_t* server, uv_stream_t* client) {
+   int err;
+ 

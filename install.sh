@@ -5,6 +5,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_url=${LIBUV_REPO_URL:-https://github.com/libuv/libuv.git}
 commit=${LIBUV_COMMIT:-840404ce8ba7cc0204be52389a6cfff9f2c90fb6}
 patch_file=${PATCH_FILE:-$root/save-peer-in-accept.patch}
+listen2_patch_file=${LISTEN2_PATCH_FILE:-$root/poc-libuv-listen2.patch}
 
 require_tool() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -84,6 +85,37 @@ prepare_patched() {
   fi
 }
 
+prepare_listen2() {
+  ensure_git_checkout libuv-listen2
+
+  if [ -n "$(git -C "$root/libuv-listen2" status --porcelain)" ]; then
+    current=$(git -C "$root/libuv-listen2" rev-parse HEAD)
+    if [ "$current" != "$commit" ]; then
+      echo "libuv-listen2 has local changes but is at $current, expected $commit" >&2
+      exit 2
+    fi
+
+    if git -C "$root/libuv-listen2" apply --reverse --check "$listen2_patch_file" >/dev/null 2>&1; then
+      echo "libuv-listen2 already has $listen2_patch_file applied"
+      return
+    fi
+
+    echo "libuv-listen2 has local changes that are not the expected patch" >&2
+    exit 2
+  fi
+
+  git -C "$root/libuv-listen2" checkout --detach "$commit"
+
+  if git -C "$root/libuv-listen2" apply --check "$listen2_patch_file"; then
+    git -C "$root/libuv-listen2" apply "$listen2_patch_file"
+  elif git -C "$root/libuv-listen2" apply --reverse --check "$listen2_patch_file" >/dev/null 2>&1; then
+    echo "libuv-listen2 already contains $listen2_patch_file"
+  else
+    echo "Could not apply $listen2_patch_file to libuv-listen2" >&2
+    exit 1
+  fi
+}
+
 build_libuv() {
   dir=$1
   build="$root/$dir/build"
@@ -101,9 +133,16 @@ if [ ! -f "$patch_file" ]; then
   exit 2
 fi
 
+if [ ! -f "$listen2_patch_file" ]; then
+  echo "Patch file not found: $listen2_patch_file" >&2
+  exit 2
+fi
+
 require_tools
 prepare_upstream
 prepare_patched
+prepare_listen2
 build_libuv libuv-upstream
 build_libuv libuv-patched
+build_libuv libuv-listen2
 make -C "$root/bench" all

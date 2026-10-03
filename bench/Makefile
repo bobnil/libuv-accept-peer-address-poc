@@ -8,15 +8,18 @@ ROOT := ..
 
 UPSTREAM_DIR := $(ROOT)/libuv-upstream
 PATCHED_DIR := $(ROOT)/libuv-patched
+LISTEN2_DIR := $(ROOT)/libuv-listen2
 UPSTREAM_BUILD := $(UPSTREAM_DIR)/build
 PATCHED_BUILD := $(PATCHED_DIR)/build
+LISTEN2_BUILD := $(LISTEN2_DIR)/build
 
 SERVER_SRC := server.c
+LISTEN2_SERVER_SRC := server-listen2.c
 CLIENT_SRC := client.c
 
 .PHONY: all clean
 
-all: server-upstream server-patched client
+all: server-upstream server-patched server-listen2 client
 
 server-upstream: $(SERVER_SRC) $(UPSTREAM_BUILD)/libuv.a
 	$(CC) $(CPPFLAGS) -I$(UPSTREAM_DIR)/include $(CFLAGS) $< \
@@ -26,8 +29,12 @@ server-patched: $(SERVER_SRC) $(PATCHED_BUILD)/libuv.a
 	$(CC) $(CPPFLAGS) -I$(PATCHED_DIR)/include $(CFLAGS) $< \
 		$(PATCHED_BUILD)/libuv.a $(LDFLAGS) $(LDLIBS) -o $@
 
+server-listen2: $(LISTEN2_SERVER_SRC) $(LISTEN2_BUILD)/libuv.a
+	$(CC) $(CPPFLAGS) -I$(LISTEN2_DIR)/include $(CFLAGS) $< \
+		$(LISTEN2_BUILD)/libuv.a $(LDFLAGS) $(LDLIBS) -o $@
+
 client: $(CLIENT_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LDFLAGS) -o $@
 
 clean:
-	rm -f server-upstream server-patched client
+	rm -f server-upstream server-patched server-listen2 client
