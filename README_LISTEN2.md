@@ -1,5 +1,8 @@
 # Node/libuv `uv_listen2()` proof of concept
 
+For the repository overview and the other proof of concept, see
+[README.md](README.md).
+
 This note describes the second proof of concept in this repository: a libuv API
 shape that delivers the TCP peer address captured by `accept()`, and a Node.js
 integration that uses that address for `net.Socket` peer information.
