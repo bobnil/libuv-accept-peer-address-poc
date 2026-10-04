@@ -1063,141 +1063,177 @@ The research did **not** find direct evidence for:
 
 ## References
 
-### BSD sockets origins
+### §1 — Socket API baseline: BSD and Linux
 
-1. Samuel J. Leffler, Robert S. Fabry, and William N. Joy, _A 4.2bsd Interprocess Communication Primer_, UCB/CSD-83-145,
-   July 1983.  
-   https://www2.eecs.berkeley.edu/Pubs/TechRpts/1983/5451.html
+#### BSD sockets origins
 
-2. Historical 2.11BSD `accept(2)` manual, address result parameter.  
-   https://man.freebsd.org/cgi/man.cgi?manpath=2.11+BSD&query=accept&sektion=2
+- 1.1 Samuel J. Leffler, Robert S. Fabry, and William N. Joy, _A 4.2bsd Interprocess Communication Primer_,
+  UCB/CSD-83-145, July 1983.  
+   <https://www2.eecs.berkeley.edu/Pubs/TechRpts/1983/5451.html>
 
-3. Historical FreeBSD `getpeername(2)` manual, 4.2BSD origin and `ENOTCONN`.  
-   https://man.freebsd.org/cgi/man.cgi?manpath=FreeBSD+4.10-RELEASE+and+Ports&query=getpeername&sektion=2
+- 1.2 Historical 2.11BSD `accept(2)` manual, address result parameter.  
+  <https://man.freebsd.org/cgi/man.cgi?manpath=2.11+BSD&query=accept&sektion=2>
 
-4. Early BSD-derived FreeBSD `sys/kern/uipc_syscalls.c`, accept and connected-state check in `getpeername()`.  
-   https://minnie.tuhs.org/94Web/FreeBSD-srctree/newsrc/kern/uipc_syscalls.c.html
+- 1.3 Historical FreeBSD `getpeername(2)` manual, 4.2BSD origin and `ENOTCONN`.  
+  <https://man.freebsd.org/cgi/man.cgi?manpath=FreeBSD+4.10-RELEASE+and+Ports&query=getpeername&sektion=2>
 
-5. FreeBSD-net discussion, January 23, 2011, _getpeername returning ENOTCONN for a connected socket_.  
-   https://lists.freebsd.org/pipermail/freebsd-net/2011-January/027648.html
+- 1.4 Early BSD-derived FreeBSD `sys/kern/uipc_syscalls.c`, accept and connected-state check in `getpeername()`.  
+  <https://minnie.tuhs.org/94Web/FreeBSD-srctree/newsrc/kern/uipc_syscalls.c.html>
 
-### Linux kernel history
+- 1.5 FreeBSD-net discussion, January 23, 2011, _getpeername returning ENOTCONN for a connected socket_.  
+  <https://lists.freebsd.org/pipermail/freebsd-net/2011-January/027648.html>
 
-The following source files are included in the accompanying `linux-files.tar.gz`. The patches record the exact version
-transitions. The accompanying `linux-kernel-accept.md` gives a more detailed walkthrough.
+#### Linux kernel history
 
-6. Linux 0.98, `net/tcp/tcp.c`, `net/tcp/sock.c`, and `net/socket.c` — pending child, stored peer, and state-sensitive
-   accept address lookup.
+- 1.6 Linux 0.98, pending child, stored peer, and state-sensitive accept address lookup.
+  <https://kernelhistory.sourcentral.org/linux-0.98/>
+  - `net/tcp/tcp.c` <https://kernelhistory.sourcentral.org/linux-0.98/S/254.html>
+  - `net/tcp/sock.c` <https://kernelhistory.sourcentral.org/linux-0.98/S/252.html>
+  - `net/socket.c` <https://kernelhistory.sourcentral.org/linux-0.98/S/232.html>
 
-7. Linux 1.1.13 and 1.1.45, `net/inet/tcp.c` and `net/inet/af_inet.c` — BSD accept/select concern, peer-name state
-   checks, and accept error path.
+- 1.7 Linux 1.1.13 and 1.1.45, BSD accept/select concern, peer-name state checks, and accept error path.
+  - Linux 1.1.13 `net/inet/tcp.c` <https://kernelhistory.sourcentral.org/linux-1.1.13/S/329.html>
+  - Linux 1.1.45 `net/inet/tcp.c` <https://kernelhistory.sourcentral.org/linux-1.1.45/S/352.html>
+  - Linux 1.1.13 `net/inet/af_inet.c` <https://kernelhistory.sourcentral.org/linux-1.1.13/S/353.html>
+  - Linux 1.1.45 `net/inet/af_inet.c` <https://kernelhistory.sourcentral.org/linux-1.1.45/S/378.html>
 
-8. Linux `patch-1.1.50` (original `patch50`) and `patch-1.1.63` (original `patch63`) — readiness/accept criterion and
-   closing-state refinement.
+- 1.8 Linux, readiness/accept criterion and closing-state refinement.
+  - Linux 1.1, `patch50`: <https://www.kernel.org/pub/linux/kernel/v1.1/patch50.gz>
+  - Linux 1.1, `patch63`: <https://www.kernel.org/pub/linux/kernel/v1.1/patch63.gz>
 
-9. Linux 1.3.0, `net/ipv4/af_inet.c` — comment on BSD accept semantics and the remaining error path.
+- 1.9 Linux 1.3.0, comment on BSD accept semantics and the remaining error path.
+  - `net/ipv4/af_inet.c`: <https://kernelhistory.sourcentral.org/linux-1.3.0/S/528.html>
 
-10. Linux `patch-2.3.15`, especially `net/ipv4/tcp_ipv4.c`, `tcp.c`, and `af_inet.c` — established-then-RST child
-    retained for accept; compare 2.3.14 and 2.3.15 snapshots.
+- 1.10 Linux `patch-2.3.15`, especially `net/ipv4/tcp_ipv4.c`, `tcp.c`, and `af_inet.c` — established-then-RST child
+  retained for accept; compare 2.3.14 and 2.3.15 snapshots.
+  - `patch-2.3.14` <https://www.kernel.org/pub/linux/kernel/v2.3/patch-2.3.14.gz>,
+  - `patch-2.3.15` <https://www.kernel.org/pub/linux/kernel/v2.3/patch-2.3.15.gz>
 
-11. Linux `patch-2.3.43`, especially `net/socket.c`, `net/ipv4/af_inet.c`, and `net/ipv6/af_inet6.c` — distinct `peer=2`
-    and `peer=1` lookups; compare 2.3.42 and 2.3.43 snapshots.
+- 1.11 Linux `patch-2.3.43`, especially `net/socket.c`, `net/ipv4/af_inet.c`, and `net/ipv6/af_inet6.c` — distinct
+  `peer=2` and `peer=1` lookups; compare 2.3.42 and 2.3.43 snapshots.
+  - `patch-2.3.42` <https://www.kernel.org/pub/linux/kernel/v2.3/patch-2.3.42.gz>
+  - `patch-2.3.43` <https://www.kernel.org/pub/linux/kernel/v2.3/patch-2.3.43.gz>
 
-### Early Node and libuv
+### §2 — Before libuv: Node retained peer identity from accept
 
-12. Node v0.5.0 changelog  
-    https://github.com/nodejs/node/blob/main/doc/changelogs/CHANGELOG_ARCHIVE.md#20110705-version-050-unstable
+- 2.1 Node v0.5.9 legacy networking backend  
+  <https://github.com/nodejs/node-v0.x-archive/blob/v0.5.9/lib/net_legacy.js>
 
-13. Node v0.5.0 bundled libuv `desired-api.md`  
-    https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/desired-api.md
+### §3 — July 2011: the first public libuv backend changes the abstraction
 
-14. Node v0.5.0 bundled libuv Unix implementation  
-    https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/uv-unix.c
+- 3.1 Node v0.5.0 changelog  
+  <https://github.com/nodejs/node/blob/main/doc/changelogs/CHANGELOG_ARCHIVE.md#20110705-version-050-unstable>
 
-15. Node v0.5.0 bundled libuv Windows implementation  
-    https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/uv-win.c
+- 3.2 Node v0.5.0 bundled libuv `desired-api.md`  
+  <https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/desired-api.md>
 
-16. Node v0.5.0 bundled libuv Windows private fields  
-    https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/uv-win.h
+- 3.3 Node v0.5.0 bundled libuv Unix implementation  
+  <https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/uv-unix.c>
 
-17. Ryan Dahl, `Asynchronous I/O in Windows for Unix Programmers` / `iocp-links.html`  
-    https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/iocp-links.html
+### §4 — The Windows side: the same connection/handle separation
 
-18. Node v0.5.9 legacy networking backend  
-    https://github.com/nodejs/node-v0.x-archive/blob/v0.5.9/lib/net_legacy.js
+- 4.1 Node v0.5.0 bundled libuv Windows implementation  
+  <https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/uv-win.c>
 
-### 2011 peer-query changes
+- 4.2 Node v0.5.0 bundled libuv Windows private fields  
+  <https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/uv-win.h>
 
-19. libuv `12b01e95f9afb56f602ca17f44d3b7e22e37c656` — `Specialize uv_xxx_getsockname, add uv_tcp_getpeername`  
-    https://github.com/libuv/libuv/commit/12b01e95f9afb56f602ca17f44d3b7e22e37c656
+- 4.3 Ryan Dahl, `Asynchronous I/O in Windows for Unix Programmers` / `iocp-links.html`  
+  <https://github.com/nodejs/node-v0.x-archive/blob/v0.5.0/deps/uv/iocp-links.html>
 
-20. Node `e20d0c1` — `net-uv: correctly set socket.remoteAddress and -port`  
-    https://github.com/nodejs/node-v0.x-archive/commit/e20d0c1
+### §5 — September 2011: `uv_tcp_getpeername()` is introduced
 
-21. Node v0.5.6 changelog  
-    https://github.com/nodejs/node/blob/main/doc/changelogs/CHANGELOG_ARCHIVE.md#20110908-version-056-unstable
+- 5.1 libuv `12b01e95f9afb56f602ca17f44d3b7e22e37c656` — `Specialize uv_xxx_getsockname, add uv_tcp_getpeername`  
+  <https://github.com/libuv/libuv/commit/12b01e95f9afb56f602ca17f44d3b7e22e37c656>
 
-22. Node v0.5.9 libuv networking backend  
-    https://github.com/nodejs/node-v0.x-archive/blob/v0.5.9/lib/net_uv.js
+### §6 — Node adopts `uv_tcp_getpeername()` for `remoteAddress`
 
-23. Node `1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0` — `net: remove unconditional getpeername() call`  
-    https://github.com/nodejs/node-v0.x-archive/commit/1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0
+- 6.1 Node `e20d0c1` — `net-uv: correctly set socket.remoteAddress and -port`  
+  <https://github.com/nodejs/node-v0.x-archive/commit/e20d0c1>
 
-24. `http_simple.js` at `1bb820a`  
-    https://github.com/nodejs/node-v0.x-archive/blob/1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0/benchmark/http_simple.js
+- 6.2 Node v0.5.6 changelog  
+  <https://github.com/nodejs/node/blob/main/doc/changelogs/CHANGELOG_ARCHIVE.md#20110908-version-056-unstable>
 
-25. `http_simple_bench.sh` at `1bb820a`  
-    https://github.com/nodejs/node-v0.x-archive/blob/1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0/benchmark/http_simple_bench.sh
+### §7 — Initially Node queried peer identity immediately
 
-26. ApacheBench documentation (`-k` / KeepAlive)  
-    https://httpd.apache.org/docs/current/en/programs/ab.html
+- 7.1 Node v0.5.9 libuv networking backend  
+  <https://github.com/nodejs/node-v0.x-archive/blob/v0.5.9/lib/net_uv.js>
 
-### 2012 accept cleanup
+### §8 — October 2011: the peer lookup is made lazy for performance
 
-27. libuv `752ac30ec820bc0ef4dfea698fd7119a8a4aa14c` — `unix: don't pass sockaddr to accept()`  
-    https://github.com/libuv/libuv/commit/752ac30ec820bc0ef4dfea698fd7119a8a4aa14c
+- 8.1 Node `1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0` — `net: remove unconditional getpeername() call`  
+  <https://github.com/nodejs/node-v0.x-archive/commit/1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0>
 
-### Reports and later Node changes
+- 8.2 `http_simple.js` at `1bb820a`  
+  <https://github.com/nodejs/node-v0.x-archive/blob/1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0/benchmark/http_simple.js>
 
-28. Node v0.x issue #7566 — `Race condition when getting remoteAddress of connection`  
-    https://github.com/nodejs/node-v0.x-archive/issues/7566
+- 8.3 `http_simple_bench.sh` at `1bb820a`  
+  <https://github.com/nodejs/node-v0.x-archive/blob/1bb820a339e64898a4b1d66cfc3e7a6d2e6b8ef0/benchmark/http_simple_bench.sh>
 
-29. Node v0.x issue #9287 — `socket.remoteAddress after close is undefined`  
-    https://github.com/nodejs/node-v0.x-archive/issues/9287
+- 8.4 ApacheBench documentation (`-k` / KeepAlive)  
+  <https://httpd.apache.org/docs/current/en/programs/ab.html>
 
-30. Node v0.x PR #9366  
-    https://github.com/nodejs/node-v0.x-archive/pull/9366
+### §9 — May 2012: stop requesting the unused sockaddr
 
-31. Node `30666f2` — `net: use cached peername to resolve remote fields`  
-    https://github.com/nodejs/node-v0.x-archive/commit/30666f2
+- 9.1 libuv `752ac30ec820bc0ef4dfea698fd7119a8a4aa14c` — `unix: don't pass sockaddr to accept()`  
+  <https://github.com/libuv/libuv/commit/752ac30ec820bc0ef4dfea698fd7119a8a4aa14c>
 
-32. Node issue #23858 — `socket.remoteAddress is sometimes undefined in net server connect handler`  
-    https://github.com/nodejs/node/issues/23858
+### §10 — 2014: Node issue #7566 identifies the same root cause and discusses a fix
 
-33. Node issue #48061 — `Closed socket leads to undefined values in socket.remote* properties`  
-    https://github.com/nodejs/node/issues/48061
+- 10.1 Node v0.x issue #7566 — `Race condition when getting remoteAddress of connection`  
+  <https://github.com/nodejs/node-v0.x-archive/issues/7566>
 
-34. Node PR #48139 — `doc: update socket.remote* properties documentation`  
-    https://github.com/nodejs/node/pull/48139
+- 10.2 Ben Noordhuis comment, May 6, 2014.  
+  <https://github.com/nodejs/node-v0.x-archive/issues/7566#issuecomment-42294224>
 
-### Current libuv
+- 10.3 TJ Fontaine comment, May 6, 2014.  
+  <https://github.com/nodejs/node-v0.x-archive/issues/7566#issuecomment-42307064>
 
-35. Current Unix accept helper  
-    https://github.com/libuv/libuv/blob/v1.x/src/unix/core.c
+### §11 — 2015: preserving an already-cached peer name
 
-36. Current Unix server accept / `accepted_fd` path  
-    https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c
+- 11.1 Node v0.x issue #9287 — `socket.remoteAddress after close is undefined`  
+  <https://github.com/nodejs/node-v0.x-archive/issues/9287>
 
-37. Current Unix `uv_tcp_getpeername()` implementation  
-    https://github.com/libuv/libuv/blob/v1.x/src/unix/tcp.c
+- 11.2 Node v0.x PR #9366  
+  <https://github.com/nodejs/node-v0.x-archive/pull/9366>
 
-38. libuv TCP API documentation  
-    https://docs.libuv.org/en/v1.x/tcp.html
+- 11.3 Node `30666f2` — `net: use cached peername to resolve remote fields`  
+  <https://github.com/nodejs/node-v0.x-archive/commit/30666f2>
 
-### Proof of concept
+### §12 — 2018: the original symptom is still reproducible
 
-39. POC repository  
-    https://github.com/bobnil/libuv-accept-peer-address-poc
+- 12.1 Node issue #23858 — `socket.remoteAddress is sometimes undefined in net server connect handler`  
+  <https://github.com/nodejs/node/issues/23858>
 
-40. POC benchmark methodology and results  
-    https://github.com/bobnil/libuv-accept-peer-address-poc/blob/main/BENCHMARK.md
+### §13 — 2023: the first-access-after-destruction limitation is rediscovered
+
+- 13.1 Node issue #48061 — `Closed socket leads to undefined values in socket.remote* properties`  
+  <https://github.com/nodejs/node/issues/48061>
+
+- 13.2 Node PR #48139 — `doc: update socket.remote* properties documentation`  
+  <https://github.com/nodejs/node/pull/48139>
+
+- 13.3 Node landed commit on main, `5275843`.  
+  <https://github.com/nodejs/node/commit/5275843>
+
+### §14 — Current libuv: the architecture remains recognizable
+
+- 14.1 Current Unix accept helper  
+  <https://github.com/libuv/libuv/blob/v1.x/src/unix/core.c>
+
+- 14.2 Current Unix server accept / `accepted_fd` path  
+  <https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c>
+
+- 14.3 Current Unix `uv_tcp_getpeername()` implementation  
+  <https://github.com/libuv/libuv/blob/v1.x/src/unix/tcp.c>
+
+- 14.4 libuv TCP API documentation  
+  <https://docs.libuv.org/en/v1.x/tcp.html>
+
+### §16 — Modern proof of concept and measurements
+
+- 16.1 POC repository  
+  <https://github.com/bobnil/libuv-accept-peer-address-poc>
+
+- 16.2 POC benchmark methodology and results  
+  <https://github.com/bobnil/libuv-accept-peer-address-poc/blob/main/BENCHMARK.md>
