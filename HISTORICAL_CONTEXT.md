@@ -619,7 +619,7 @@ A proposal to preserve the address already produced by `accept()` would not rein
 
 ---
 
-## 10. 2014: Node issue #7566 identifies the same root cause
+## 10. 2014: Node issue #7566 identifies the same root cause and discusses a fix
 
 Node issue #7566, **"Race condition when getting remoteAddress of connection"**, was opened on May 6, 2014 and labeled
 `S-confirmed-bug`, `net`, `v0.10`, and `v0.12`.
@@ -633,27 +633,50 @@ implementation from Node's `remoteAddress` accessor through `_getpeername`, `TCP
 Most importantly, the report explicitly notes that information can be supplied by `accept()` but is ignored by libuv,
 and concludes that the reliable approach would be to retain that address with the connection.
 
-This is strong evidence that the correctness consequence of the abstraction was understood by 2014.
+This establishes that the accept/query lifetime problem and the corresponding accept-time-retention approach were both
+identified explicitly by 2014.
 
-No libuv change that implements accept-time peer-address retention has been identified from that issue.
+### 10.1 Ben Noordhuis: current behavior, performance, and ABI constraints
 
-**Issue**
+Ben Noordhuis replied that the report's analysis was correct, but described libuv's decision not to request the
+accept-time address as intentional and pointed to libuv commit `752ac30`.
+
+He gave two practical reasons. First, having the kernel copy out the `struct sockaddr` has a cost and the result is
+often unused. Second, retaining the result would require storing it somewhere; he said that this could not then be done
+in `uv_tcp_t` without breaking its ABI.
+
+### 10.2 TJ Fontaine: the problem was known and `uv_accept()` was a constraint
+
+TJ Fontaine distinguished peer and local endpoint information. For both an outbound `net.connect` socket and a socket
+created from a server accept, he described `remoteAddress` as information that could be made consistently available
+because the peer is implicit in establishing the connection. By contrast, obtaining `localAddress` requires an
+additional query.
+
+More importantly, Fontaine said that the absence of an optional `struct sockaddr` from libuv's `uv_accept()` API had
+already come up in discussion. He connected that API limitation to release compatibility: it meant the problem could not
+be fixed in a stable release, but said that something could be done about it going forward.
+
+He then explicitly acknowledged the current failure mode: applications could fail to receive the address, the project
+knew about the problem, and work was underway on a solution intended to improve the situation.
+
+By May 2014, the sources directly establish that:
+
+- the loss of `remoteAddress` was recognized as a real bug;
+- the relationship between that failure and libuv's accept/getpeername design was understood;
+- retaining information associated with connection establishment was being considered;
+- the shape of `uv_accept()` and compatibility with stable libuv releases constrained possible fixes;
+- `uv_tcp_t` ABI compatibility was separately identified by Noordhuis as an obstacle to storing the sockaddr directly.
+
+They do **not** establish what exact implementation Fontaine meant by the solution then under development, or that such
+a solution subsequently landed.
+
+No libuv change implementing general accept-time peer-address retention has been identified from this discussion.
+
+**Sources**
 
 - Node v0.x archive #7566: https://github.com/nodejs/node-v0.x-archive/issues/7566
-
-### 10.1 The later-preserved TJ Fontaine comment
-
-The archived #7566 UI no longer exposes the historical comment discussion in a useful way.
-
-However, Node issue #23858 from 2018 quotes an earlier comment attributed to TJ Fontaine saying that the problem was
-known and that work was underway on a solution that would improve the situation.
-
-Because this quotation is currently visible only through the later 2018 issue, it should be treated as a later-preserved
-quotation, not as a comment directly verified in the original #7566 thread.
-
-No specific implementation has been identified with confidence as the "solution" referred to there.
-
----
+- Ben Noordhuis comment, May 6, 2014: https://github.com/nodejs/node-v0.x-archive/issues/7566#issuecomment-42294224
+- TJ Fontaine comment, May 6, 2014: https://github.com/nodejs/node-v0.x-archive/issues/7566#issuecomment-42307064
 
 ## 11. 2015: preserving an already-cached peer name
 
@@ -976,8 +999,13 @@ about other kernels, platforms, CPUs, or workloads.
 - `uv_tcp_getpeername()` was introduced later as a separate live query, adopted by Node, and subsequently made lazy for
   an approximately 1% reported `http_simple` gain. That benchmark did not use peer identity.
 - libuv later stopped requesting the otherwise-unused sockaddr from Unix `accept()` / `accept4()`.
-- Node #7566 identified the race in 2014. The 2015 cache change helps only after a successful first lookup. Reports in
-  2018 and 2023 document the remaining first-access failure; current Unix libuv still uses a later live query.
+- The #7566 discussion confirms that the problem was understood by Node/libuv maintainers. Ben Noordhuis described the
+  then-current omission of the accept-time sockaddr as intentional, cited the cost of copying frequently unused address
+  data, and said that storing it in `uv_tcp_t` would at that point break the ABI. TJ Fontaine said that the absence of
+  an optional `struct sockaddr` from `uv_accept()` had already been discussed, that this prevented a fix in a stable
+  release, and that work was underway on a solution intended to improve the situation.
+- The 2015 Node cache change helps only after a successful first peer lookup. Reports in 2018 and 2023 document the
+  remaining first-access failure; current Unix libuv still uses a later live query.
 
 ### Strong technical conclusion
 
@@ -985,6 +1013,9 @@ An address returned by `accept()` and a later `getpeername(accepted_fd)` are not
 every socket-state transition. Linux 2.3.43 explicitly permits accept-time retrieval of stored peer information in a
 state where ordinary `getpeername()` returns `ENOTCONN`. The BSD interface had offered accept-time retrieval from its
 inception.
+
+For an accepted connection, discarding the accept-time peer address therefore discards information with a lifetime that
+is not guaranteed to be reproduced by a later query against the socket.
 
 ### Reasonable architectural interpretation
 
@@ -999,15 +1030,12 @@ The research did **not** find direct evidence for:
 
 - the exact reason peer metadata was excluded from the original `uv_accept()` state;
 - whether reset-before-peer-query was considered in the original design;
-- whether handle size, ABI, or portability concerns influenced the choice;
-- what exact implementation TJ Fontaine referred to when he said he was working on a solution;
-- a historical libuv discussion explicitly considering and rejecting accept-time peer retention;
+- whether ABI, handle-size, performance, portability, or other concerns motivated the original 2011 decision;
+- the exact implementation TJ Fontaine meant by the solution under development in May 2014;
+- whether that proposed solution involved changing uv_accept(), storing peer information elsewhere, changing Node's
+  behavior, or some combination of those approaches;
 - a historical Unix convention requiring `accept()` followed by `getpeername()` rather than using the address returned
   by `accept()`.
-
-These points should not be presented as established historical motivation.
-
----
 
 ## 18. Condensed chronology
 
